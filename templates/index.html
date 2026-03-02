@@ -108,7 +108,15 @@
         <section id="resultsSection" style="display:none">
             <div class="results-header">
                 <span id="resultsSummary"></span>
-                <button type="button" id="exportBtn" onclick="downloadCSV()">Download CSV</button>
+                <button type="button" id="exportBtn" onclick="downloadCSV()">Download All CSV</button>
+            </div>
+            <div class="action-bar" id="actionBar" style="display:none">
+                <span id="selectionCount"></span>
+                <button type="button" onclick="copyUrlsToClipboard()">Copy URLs</button>
+                <button type="button" onclick="exportSelectedCSV()">Export Selected CSV</button>
+                <button type="button" onclick="exportCommentsCsv()">Export Comments CSV</button>
+                <button type="button" onclick="openNotebookLM()">Send to NotebookLM</button>
+                <span id="selectionWarn" style="display:none"></span>
             </div>
             <div class="filter-row">
                 <input type="text" id="tableFilter" placeholder="Filter results..." oninput="filterTable()">
@@ -118,6 +126,7 @@
                 <table id="resultsTable">
                     <thead>
                         <tr>
+                            <th><input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)"></th>
                             <th>#</th>
                             <th>Thumbnail</th>
                             <th class="sortable" data-key="title" onclick="sortBy('title')">Title <span class="sort-arrow"></span></th>

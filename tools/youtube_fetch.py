@@ -12,15 +12,46 @@ import db
 
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
 
+# --- Multi-key rotation ---
+_exhausted_keys = set()
+
+
+def _load_keys():
+    keys_str = os.getenv('YOUTUBE_API_KEYS', '')
+    if keys_str:
+        keys = [k.strip() for k in keys_str.split(',') if k.strip()]
+        if keys:
+            return keys
+    single = os.getenv('YOUTUBE_API_KEY', '')
+    if single and single != 'your_key_here':
+        return [single]
+    return []
+
 
 def get_youtube_client():
-    api_key = os.getenv('YOUTUBE_API_KEY')
-    if not api_key or api_key == 'your_key_here':
+    keys = _load_keys()
+    if not keys:
         raise ValueError(
-            "YouTube API key not configured. "
-            "Add your key to .env as YOUTUBE_API_KEY=<your_key>"
+            "No YouTube API keys configured. "
+            "Add keys to .env as YOUTUBE_API_KEYS=key1,key2,key3"
         )
-    return build('youtube', 'v3', developerKey=api_key)
+    available = [k for k in keys if k not in _exhausted_keys]
+    if not available:
+        raise ValueError("All API keys exhausted. Add more keys or try tomorrow.")
+    return build('youtube', 'v3', developerKey=available[0]), available[0]
+
+
+def mark_key_exhausted(key):
+    _exhausted_keys.add(key)
+
+
+def get_keys_status():
+    keys = _load_keys()
+    return {
+        'total_keys': len(keys),
+        'available_keys': len([k for k in keys if k not in _exhausted_keys]),
+        'exhausted_keys': len(_exhausted_keys),
+    }
 
 
 def parse_duration(iso_duration):
@@ -79,7 +110,7 @@ def title_matches_lang(title, lang_code):
 
 def search_top_videos(published_after, published_before, max_pages=1, query='',
                       title_lang='', audio_lang=''):
-    youtube = get_youtube_client()
+    youtube, current_key = get_youtube_client()
     db.init_db()
 
     all_video_ids = []
@@ -134,7 +165,12 @@ def search_top_videos(published_after, published_before, max_pages=1, query='',
 
         except HttpError as e:
             if e.resp.status == 403:
-                raise ValueError("YouTube API quota exceeded. Try again tomorrow.")
+                mark_key_exhausted(current_key)
+                try:
+                    youtube, current_key = get_youtube_client()
+                    continue  # Retry with new key
+                except ValueError:
+                    raise ValueError("All API keys exhausted. Add more keys or try tomorrow.")
             raise
 
     if not all_video_ids:
@@ -149,13 +185,26 @@ def search_top_videos(published_after, published_before, max_pages=1, query='',
     if uncached_ids:
         for i in range(0, len(uncached_ids), 50):
             batch = uncached_ids[i:i + 50]
-            try:
-                details = youtube.videos().list(
-                    part='snippet,statistics,contentDetails',
-                    id=','.join(batch)
-                ).execute()
-                quota_used += 1
+            details = None
+            for _attempt in range(len(_load_keys())):
+                try:
+                    details = youtube.videos().list(
+                        part='snippet,statistics,contentDetails',
+                        id=','.join(batch)
+                    ).execute()
+                    quota_used += 1
+                    break
+                except HttpError as e:
+                    if e.resp.status == 403:
+                        mark_key_exhausted(current_key)
+                        try:
+                            youtube, current_key = get_youtube_client()
+                        except ValueError:
+                            raise ValueError("All API keys exhausted. Add more keys or try tomorrow.")
+                    else:
+                        raise
 
+            if details:
                 videos_to_insert = []
                 for item in details.get('items', []):
                     snippet = item['snippet']
@@ -182,11 +231,6 @@ def search_top_videos(published_after, published_before, max_pages=1, query='',
                     })
 
                 db.insert_videos(videos_to_insert)
-
-            except HttpError as e:
-                if e.resp.status == 403:
-                    raise ValueError("YouTube API quota exceeded. Try again tomorrow.")
-                raise
 
     # Step 4: Log search and link results
     search_id = db.log_search(

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(py -c \"import py_compile; py_compile.compile\\(''tools/youtube_fetch.py'', doraise=True\\); print\\(''youtube_fetch.py OK''\\)\")"
+    ]
+  }
+}

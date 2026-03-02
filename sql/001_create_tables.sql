@@ -40,3 +40,16 @@ CREATE TABLE IF NOT EXISTS search_results (
 CREATE INDEX IF NOT EXISTS idx_videos_publish_date ON videos(publish_date);
 CREATE INDEX IF NOT EXISTS idx_videos_view_count ON videos(view_count DESC);
 CREATE INDEX IF NOT EXISTS idx_search_results_search ON search_results(search_id);
+
+CREATE TABLE IF NOT EXISTS comments (
+    comment_id    TEXT PRIMARY KEY,
+    video_id      TEXT NOT NULL,
+    author        TEXT,
+    text          TEXT,
+    like_count    INTEGER DEFAULT 0,
+    reply_count   INTEGER DEFAULT 0,
+    published_at  TEXT,
+    fetched_at    TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_comments_video ON comments(video_id);

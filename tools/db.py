@@ -133,6 +133,42 @@ def get_quota_used_today():
     return row['total']
 
 
+def get_comments(video_id):
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT * FROM comments WHERE video_id = ? ORDER BY like_count DESC
+    """, (video_id,)).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def has_cached_comments(video_id):
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT COUNT(*) as cnt FROM comments WHERE video_id = ?", (video_id,)
+    ).fetchone()
+    conn.close()
+    return row['cnt'] > 0
+
+
+def insert_comments(comments):
+    if not comments:
+        return
+    conn = get_connection()
+    for c in comments:
+        conn.execute("""
+            INSERT OR REPLACE INTO comments
+            (comment_id, video_id, author, text, like_count, reply_count, published_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            c['comment_id'], c['video_id'], c.get('author'),
+            c.get('text'), c.get('like_count', 0),
+            c.get('reply_count', 0), c.get('published_at')
+        ))
+    conn.commit()
+    conn.close()
+
+
 if __name__ == '__main__':
     init_db()
     print(f"Database initialized at {DB_PATH}")

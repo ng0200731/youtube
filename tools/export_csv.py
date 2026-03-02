@@ -61,3 +61,29 @@ def export_to_string(videos):
     for v in videos:
         writer.writerow(video_to_row(v))
     return output.getvalue()
+
+
+COMMENT_COLUMNS = [
+    'Video ID', 'Video Title', 'Comment Author', 'Comment Text',
+    'Likes', 'Replies', 'Published Date', 'Video URL'
+]
+
+
+def export_comments_to_string(comments, videos_map=None):
+    output = io.StringIO()
+    output.write('\ufeff')
+    writer = csv.writer(output)
+    writer.writerow(COMMENT_COLUMNS)
+    for c in comments:
+        vid = c.get('video_id', '')
+        title = ''
+        url = ''
+        if videos_map and vid in videos_map:
+            title = videos_map[vid].get('title', '')
+            url = videos_map[vid].get('video_url', '')
+        writer.writerow([
+            vid, title, c.get('author', ''), c.get('text', ''),
+            c.get('like_count', 0), c.get('reply_count', 0),
+            c.get('published_at', ''), url
+        ])
+    return output.getvalue()

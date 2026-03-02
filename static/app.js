@@ -2,6 +2,7 @@ let currentSearchId = null;
 let currentVideos = [];
 let sortKey = 'view_count';
 let sortAsc = false;
+let selectedIds = new Set();
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -82,8 +83,11 @@ async function submitSearch() {
         currentVideos = data.videos;
         sortKey = 'view_count';
         sortAsc = false;
+        selectedIds.clear();
         document.getElementById('tableFilter').value = '';
+        document.getElementById('selectAll').checked = false;
         renderResults(data.videos, dateFrom, dateTo, data.quota_used);
+        updateActionBar();
         loadQuota();
     } catch (err) {
         showError('Network error: ' + err.message);
@@ -93,13 +97,164 @@ async function submitSearch() {
     }
 }
 
+// --- Selection ---
+function toggleSelect(videoId, checkbox) {
+    if (checkbox.checked) {
+        selectedIds.add(videoId);
+    } else {
+        selectedIds.delete(videoId);
+    }
+    updateActionBar();
+    updateSelectAllCheckbox();
+}
+
+function toggleSelectAll(checked) {
+    const filtered = getFiltered(currentVideos);
+    const sorted = getSorted(filtered);
+    if (checked) {
+        sorted.forEach(v => selectedIds.add(v.video_id));
+    } else {
+        sorted.forEach(v => selectedIds.delete(v.video_id));
+    }
+    // Update all visible checkboxes
+    document.querySelectorAll('.row-checkbox').forEach(cb => { cb.checked = checked; });
+    updateActionBar();
+}
+
+function updateSelectAllCheckbox() {
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    const allChecked = checkboxes.length > 0 && Array.from(checkboxes).every(cb => cb.checked);
+    document.getElementById('selectAll').checked = allChecked;
+}
+
+function updateActionBar() {
+    const bar = document.getElementById('actionBar');
+    const count = selectedIds.size;
+    bar.style.display = count > 0 ? 'flex' : 'none';
+    document.getElementById('selectionCount').textContent = `${count} selected`;
+
+    const warn = document.getElementById('selectionWarn');
+    if (count > 50) {
+        warn.textContent = 'NotebookLM limit: 50 sources';
+        warn.style.display = 'inline';
+    } else {
+        warn.style.display = 'none';
+    }
+}
+
+// --- NotebookLM actions ---
+function copyUrlsToClipboard() {
+    const urls = getSelectedVideos().map(v => v.video_url).join('\n');
+    navigator.clipboard.writeText(urls).then(() => {
+        const btn = event.target;
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+    });
+}
+
+async function exportSelectedCSV() {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+
+    try {
+        const res = await fetch('/api/export/selected-csv', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ video_ids: ids })
+        });
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `youtube_selected_${ids.length}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        showError('Export failed: ' + e.message);
+    }
+}
+
+async function exportCommentsCsv() {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+
+    const btn = event.target;
+    const orig = btn.textContent;
+    btn.textContent = 'Fetching comments...';
+    btn.disabled = true;
+
+    try {
+        const res = await fetch('/api/export/comments-csv', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ video_ids: ids })
+        });
+
+        if (!res.ok) {
+            const data = await res.json();
+            showError(data.error || 'Export failed');
+            return;
+        }
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `youtube_comments_${ids.length}videos.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        showError('Export failed: ' + e.message);
+    } finally {
+        btn.textContent = orig;
+        btn.disabled = false;
+    }
+}
+
+async function openNotebookLM() {
+    const selected = getSelectedVideos();
+    if (!selected.length) return;
+
+    const urls = selected.map(v => v.video_url);
+    const btn = event.target;
+    const orig = btn.textContent;
+    btn.textContent = 'Opening browser...';
+    btn.disabled = true;
+
+    try {
+        const res = await fetch('/api/notebooklm/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ urls: urls })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+            showError(data.error);
+            return;
+        }
+        if (data.url) {
+            window.open(data.url, '_blank');
+        }
+    } catch (e) {
+        showError('NotebookLM failed: ' + e.message);
+    } finally {
+        btn.textContent = orig;
+        btn.disabled = false;
+    }
+}
+
+function getSelectedVideos() {
+    return currentVideos.filter(v => selectedIds.has(v.video_id));
+}
+
 // --- Sort ---
 function sortBy(key) {
     if (sortKey === key) {
         sortAsc = !sortAsc;
     } else {
         sortKey = key;
-        // Default desc for numbers, asc for text
         sortAsc = (key === 'title' || key === 'channel_title' || key === 'publish_date');
     }
     updateSortArrows();
@@ -181,8 +336,11 @@ function renderRows(videos) {
     videos.forEach((v, i) => {
         const tr = document.createElement('tr');
         tr.style.cursor = 'pointer';
-        tr.onclick = () => toggleDetail(v, tr);
+        tr.onclick = (e) => { if (e.target.type !== 'checkbox') toggleDetail(v, tr); };
+
+        const isChecked = selectedIds.has(v.video_id);
         tr.innerHTML = `
+            <td><input type="checkbox" class="row-checkbox" ${isChecked ? 'checked' : ''} onclick="event.stopPropagation(); toggleSelect('${v.video_id}', this)"></td>
             <td>${i + 1}</td>
             <td><img class="thumb" src="${escHtml(v.thumbnail_url)}" alt="" loading="lazy"></td>
             <td><a class="video-link" href="${escHtml(v.video_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escHtml(v.title)}</a></td>
@@ -213,7 +371,7 @@ function toggleDetail(video, row) {
     const detailTr = document.createElement('tr');
     detailTr.classList.add('detail-row');
     detailTr.innerHTML = `
-        <td colspan="9">
+        <td colspan="10">
             <div class="detail-content">
                 <div>
                     <dt>Description</dt>
@@ -233,9 +391,53 @@ function toggleDetail(video, row) {
                     <dd>${escHtml(video.channel_id || 'N/A')}</dd>
                 </div>
             </div>
+            <div class="comments-section" id="comments-${video.video_id}">
+                <dt style="margin-top:1rem">Comments</dt>
+                <dd style="color:var(--muted)">Loading comments...</dd>
+            </div>
         </td>
     `;
     row.after(detailTr);
+
+    // Load comments
+    loadComments(video.video_id);
+}
+
+async function loadComments(videoId) {
+    const container = document.getElementById(`comments-${videoId}`);
+    if (!container) return;
+
+    try {
+        const res = await fetch(`/api/video/${videoId}/comments`);
+        const comments = await res.json();
+
+        if (comments.error) {
+            container.innerHTML = `<dt style="margin-top:1rem">Comments</dt><dd style="color:var(--muted)">${escHtml(comments.error)}</dd>`;
+            return;
+        }
+
+        if (comments.length === 0) {
+            container.innerHTML = '<dt style="margin-top:1rem">Comments</dt><dd style="color:var(--muted)">No comments or comments disabled</dd>';
+            return;
+        }
+
+        const commentsHtml = comments.slice(0, 50).map(c => `
+            <div class="comment-item">
+                <div class="comment-header">
+                    <span class="comment-author">${escHtml(c.author)}</span>
+                    <span class="comment-meta">${(c.published_at || '').slice(0, 10)} | ${c.like_count} likes${c.reply_count ? ' | ' + c.reply_count + ' replies' : ''}</span>
+                </div>
+                <div class="comment-text">${escHtml(c.text)}</div>
+            </div>
+        `).join('');
+
+        container.innerHTML = `
+            <dt style="margin-top:1rem">Comments (${comments.length})</dt>
+            <dd><div class="comments-list">${commentsHtml}</div></dd>
+        `;
+    } catch (e) {
+        container.innerHTML = '<dt style="margin-top:1rem">Comments</dt><dd style="color:var(--muted)">Failed to load comments</dd>';
+    }
 }
 
 // --- CSV export ---
@@ -249,8 +451,12 @@ async function loadQuota() {
     try {
         const res = await fetch('/api/quota');
         const data = await res.json();
+        const keys = data.keys || {};
+        const keyInfo = keys.total_keys > 1
+            ? ` (${keys.available_keys}/${keys.total_keys} keys active)`
+            : '';
         document.getElementById('quotaInfo').textContent =
-            `Quota: ${formatNum(data.remaining)} / ${formatNum(data.daily_limit)} remaining today`;
+            `Quota: ${formatNum(data.remaining)} / ${formatNum(data.daily_limit)} remaining today${keyInfo}`;
     } catch (e) {
         document.getElementById('quotaInfo').textContent = 'Quota info unavailable';
     }
@@ -297,8 +503,11 @@ async function loadHistorySearch(searchId, dateFrom, dateTo) {
         currentVideos = videos;
         sortKey = 'view_count';
         sortAsc = false;
+        selectedIds.clear();
         document.getElementById('tableFilter').value = '';
+        document.getElementById('selectAll').checked = false;
         renderResults(videos, dateFrom, dateTo, 0);
+        updateActionBar();
     } catch (e) {
         showError('Failed to load search results');
     } finally {
