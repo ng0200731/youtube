@@ -108,6 +108,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .quick-dates { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
 .quick-dates button { font-size: 0.8rem; padding: 0.3rem 0.75rem; border-width: 1px; }
+.quick-dates button.active { background: var(--fg); color: var(--bg); }
 
 .quota-bar { margin-top: 0.75rem; font-size: 0.8rem; color: var(--muted); }
 

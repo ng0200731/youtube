@@ -102,11 +102,12 @@
                         <input type="text" name="website" id="website" style="position:absolute;left:-9999px" tabindex="-1" autocomplete="off">
 
                         <div class="quick-dates">
-                            <button type="button" onclick="setQuickDate('thisMonth')">This Month</button>
-                            <button type="button" onclick="setQuickDate('lastMonth')">Last Month</button>
-                            <button type="button" onclick="setQuickDate('thisYear')">This Year</button>
-                            <button type="button" onclick="setQuickDate('lastYear')">Last Year</button>
-                            <button type="button" onclick="setQuickDate('allTime')">All Time</button>
+                            <button type="button" onclick="setQuickDate('thisMonth', event)">This Month</button>
+                            <button type="button" onclick="setQuickDate('lastMonth', event)">Last Month</button>
+                            <button type="button" onclick="setQuickDate('thisYear', event)">This Year</button>
+                            <button type="button" onclick="setQuickDate('lastYear', event)">Last Year</button>
+                            <button type="button" onclick="setQuickDate('allTime', event)">All Time</button>
+                            <button type="button" onclick="clearSearch()">Clear</button>
                             <button type="button" id="searchBtn" onclick="submitSearch()">Find Top Videos</button>
                         </div>
                     </form>
@@ -122,6 +123,7 @@
                 <section id="resultsSection" style="display:none">
                     <div class="results-header">
                         <span id="resultsSummary"></span>
+                        <button type="button" onclick="exportAllLinks()">Export All Links</button>
                         <button type="button" id="exportBtn" onclick="downloadCSV()">Download All CSV</button>
                     </div>
                     <div class="action-bar" id="actionBar" style="display:none">

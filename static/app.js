@@ -7,8 +7,34 @@ let selectedIds = new Set();
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
     loadQuota();
-    setQuickDate('thisMonth');
+    // Set initial date and highlight the button
+    const thisMonthBtn = document.querySelector('.quick-dates button[onclick*="thisMonth"]');
+    if (thisMonthBtn) {
+        thisMonthBtn.click();
+    }
+
+    // Clear highlight when dates are manually changed
+    document.getElementById('dateFrom').addEventListener('change', clearQuickDateHighlight);
+    document.getElementById('dateTo').addEventListener('change', clearQuickDateHighlight);
 });
+
+function clearQuickDateHighlight() {
+    document.querySelectorAll('.quick-dates button').forEach(btn => {
+        btn.classList.remove('active');
+    });
+}
+
+// --- Clear search form ---
+function clearSearch() {
+    document.getElementById('query').value = '';
+    document.getElementById('channelName').value = '';
+    document.getElementById('titleLang').value = '';
+    document.getElementById('audioLang').value = '';
+    document.getElementById('dateFrom').value = '';
+    document.getElementById('dateTo').value = '';
+    document.getElementById('maxPages').value = '1';
+    clearQuickDateHighlight();
+}
 
 // --- Panel switching ---
 function showPanel(name) {
@@ -20,7 +46,7 @@ function showPanel(name) {
 }
 
 // --- Quick date presets ---
-function setQuickDate(preset) {
+function setQuickDate(preset, evt) {
     const now = new Date();
     let from, to;
 
@@ -49,6 +75,14 @@ function setQuickDate(preset) {
 
     document.getElementById('dateFrom').value = formatDate(from);
     document.getElementById('dateTo').value = formatDate(to);
+
+    // Update active state
+    if (evt && evt.target) {
+        document.querySelectorAll('.quick-dates button').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        evt.target.classList.add('active');
+    }
 }
 
 // --- Search ---
@@ -487,6 +521,19 @@ async function loadComments(videoId) {
 function downloadCSV() {
     if (!currentSearchId) return;
     window.location.href = `/api/export/csv?search_id=${currentSearchId}`;
+}
+
+// --- Export all links ---
+function exportAllLinks() {
+    if (!currentVideos.length) return;
+    const urls = currentVideos.map(v => v.video_url).join('\n');
+    const blob = new Blob([urls], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `youtube_links_${currentVideos.length}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
 }
 
 // --- Quota ---
