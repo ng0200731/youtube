@@ -41,6 +41,7 @@ def search():
     published_before = data.get('published_before')
     max_pages = min(int(data.get('max_pages', 1)), 10)
     query = data.get('query', '').strip()
+    channel_name = data.get('channel_name', '').strip()
     title_lang = data.get('title_lang', '').strip()
     audio_lang = data.get('audio_lang', '').strip()
 
@@ -53,7 +54,7 @@ def search():
     try:
         result = youtube_fetch.search_top_videos(
             published_after, published_before, max_pages,
-            query, title_lang, audio_lang
+            query, title_lang, audio_lang, channel_name
         )
         return jsonify(result)
     except ValueError as e:

@@ -109,13 +109,28 @@ def title_matches_lang(title, lang_code):
 
 
 def search_top_videos(published_after, published_before, max_pages=1, query='',
-                      title_lang='', audio_lang=''):
+                      title_lang='', audio_lang='', channel_name=''):
     youtube, current_key = get_youtube_client()
     db.init_db()
 
     all_video_ids = []
     quota_used = 0
     page_token = None
+
+    # Resolve channel name to channelId
+    channel_id = ''
+    if channel_name:
+        try:
+            ch_response = youtube.search().list(
+                part='snippet', type='channel', q=channel_name, maxResults=1
+            ).execute()
+            quota_used += 100
+            items = ch_response.get('items', [])
+            if items:
+                channel_id = items[0]['id']['channelId']
+                channel_name = items[0]['snippet']['title']
+        except HttpError:
+            pass
 
     # Build search query: combine user query with audio language keyword
     search_q = query.strip() if query else ''
@@ -146,6 +161,8 @@ def search_top_videos(published_after, published_before, max_pages=1, query='',
             }
             if title_lang and title_lang in lang_map:
                 params['relevanceLanguage'] = lang_map[title_lang]
+            if channel_id:
+                params['channelId'] = channel_id
             if page_token:
                 params['pageToken'] = page_token
 
@@ -174,7 +191,8 @@ def search_top_videos(published_after, published_before, max_pages=1, query='',
             raise
 
     if not all_video_ids:
-        search_id = db.log_search(published_after, published_before, max_pages, 0, quota_used)
+        search_id = db.log_search(published_after, published_before, max_pages, 0, quota_used,
+                                  query, channel_name, title_lang, audio_lang)
         return {'search_id': search_id, 'total_results': 0, 'quota_used': quota_used, 'videos': []}
 
     # Step 2: Check cache
@@ -235,7 +253,8 @@ def search_top_videos(published_after, published_before, max_pages=1, query='',
     # Step 4: Log search and link results
     search_id = db.log_search(
         published_after, published_before,
-        min(max_pages, page + 1), len(all_video_ids), quota_used
+        min(max_pages, page + 1), len(all_video_ids), quota_used,
+        query, channel_name, title_lang, audio_lang
     )
     db.link_search_results(search_id, all_video_ids)
 

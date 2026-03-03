@@ -22,6 +22,16 @@ def init_db():
         schema = f.read()
     conn = get_connection()
     conn.executescript(schema)
+    # Migration: add missing columns
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(searches)").fetchall()]
+    if 'query' not in cols:
+        conn.execute("ALTER TABLE searches ADD COLUMN query TEXT DEFAULT ''")
+    if 'channel_name' not in cols:
+        conn.execute("ALTER TABLE searches ADD COLUMN channel_name TEXT DEFAULT ''")
+    if 'title_lang' not in cols:
+        conn.execute("ALTER TABLE searches ADD COLUMN title_lang TEXT DEFAULT ''")
+    if 'audio_lang' not in cols:
+        conn.execute("ALTER TABLE searches ADD COLUMN audio_lang TEXT DEFAULT ''")
     conn.close()
 
 
@@ -61,12 +71,15 @@ def insert_videos(videos):
     conn.close()
 
 
-def log_search(published_after, published_before, pages_fetched, total_results, quota_used):
+def log_search(published_after, published_before, pages_fetched, total_results, quota_used,
+               query='', channel_name='', title_lang='', audio_lang=''):
     conn = get_connection()
     cursor = conn.execute("""
-        INSERT INTO searches (published_after, published_before, pages_fetched, total_results, quota_used)
-        VALUES (?, ?, ?, ?, ?)
-    """, (published_after, published_before, pages_fetched, total_results, quota_used))
+        INSERT INTO searches (published_after, published_before, pages_fetched, total_results,
+                              quota_used, query, channel_name, title_lang, audio_lang)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (published_after, published_before, pages_fetched, total_results,
+          quota_used, query, channel_name, title_lang, audio_lang))
     search_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -102,7 +115,8 @@ def get_videos_by_ids(video_ids):
 def get_search_history():
     conn = get_connection()
     rows = conn.execute("""
-        SELECT id, published_after, published_before, pages_fetched,
+        SELECT id, published_after, published_before, query, channel_name,
+               title_lang, audio_lang, pages_fetched,
                total_results, quota_used, searched_at
         FROM searches ORDER BY searched_at DESC LIMIT 50
     """).fetchall()

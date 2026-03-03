@@ -10,6 +10,15 @@ document.addEventListener('DOMContentLoaded', () => {
     setQuickDate('thisMonth');
 });
 
+// --- Panel switching ---
+function showPanel(name) {
+    document.getElementById('panelSearch').style.display = name === 'search' ? 'block' : 'none';
+    document.getElementById('panelHistory').style.display = name === 'history' ? 'block' : 'none';
+    document.getElementById('navSearch').classList.toggle('active', name === 'search');
+    document.getElementById('navHistory').classList.toggle('active', name === 'history');
+    if (name === 'history') loadHistory();
+}
+
 // --- Quick date presets ---
 function setQuickDate(preset) {
     const now = new Date();
@@ -32,6 +41,10 @@ function setQuickDate(preset) {
             from = new Date(now.getFullYear() - 1, 0, 1);
             to = new Date(now.getFullYear() - 1, 11, 31);
             break;
+        case 'allTime':
+            from = new Date(2005, 1, 14);
+            to = now;
+            break;
     }
 
     document.getElementById('dateFrom').value = formatDate(from);
@@ -44,6 +57,7 @@ async function submitSearch() {
     const dateTo = document.getElementById('dateTo').value;
     const maxPages = document.getElementById('maxPages').value;
     const query = document.getElementById('query').value;
+    const channelName = document.getElementById('channelName').value;
     const titleLang = document.getElementById('titleLang').value;
     const audioLang = document.getElementById('audioLang').value;
     const honeypot = document.getElementById('website').value;
@@ -66,6 +80,7 @@ async function submitSearch() {
                 published_before: dateTo,
                 max_pages: parseInt(maxPages),
                 query: query,
+                channel_name: channelName,
                 title_lang: titleLang,
                 audio_lang: audioLang,
                 website: honeypot
@@ -89,6 +104,7 @@ async function submitSearch() {
         renderResults(data.videos, dateFrom, dateTo, data.quota_used);
         updateActionBar();
         loadQuota();
+        loadHistory();
     } catch (err) {
         showError('Network error: ' + err.message);
     } finally {
@@ -321,17 +337,44 @@ function renderResults(videos, dateFrom, dateTo, quotaUsed) {
     const section = document.getElementById('resultsSection');
     const summary = document.getElementById('resultsSummary');
 
+    const totalViews = videos.reduce((s, v) => s + (v.view_count || 0), 0);
+    const totalLikes = videos.reduce((s, v) => s + (v.like_count || 0), 0);
+    const totalComments = videos.reduce((s, v) => s + (v.comment_count || 0), 0);
+
     summary.textContent = `${videos.length} videos from ${dateFrom} to ${dateTo}` +
-        (quotaUsed ? ` (${quotaUsed} quota units used)` : '');
+        ` | ${formatNum(totalViews)} views, ${formatNum(totalLikes)} likes, ${formatNum(totalComments)} comments` +
+        (quotaUsed ? ` (${quotaUsed} quota)` : '');
 
     updateSortArrows();
     rebuildTable();
     section.style.display = 'block';
+    const empty = document.getElementById('emptyState');
+    if (empty) empty.style.display = 'none';
 }
 
 function renderRows(videos) {
     const tbody = document.getElementById('resultsBody');
     tbody.innerHTML = '';
+
+    // Totals row
+    const totalViews = videos.reduce((s, v) => s + (v.view_count || 0), 0);
+    const totalLikes = videos.reduce((s, v) => s + (v.like_count || 0), 0);
+    const totalComments = videos.reduce((s, v) => s + (v.comment_count || 0), 0);
+    const totalDuration = videos.reduce((s, v) => s + (v.duration_seconds || 0), 0);
+    const totTr = document.createElement('tr');
+    totTr.style.fontWeight = 'bold';
+    totTr.style.borderBottom = '2px solid #000';
+    totTr.innerHTML = `
+        <td></td><td></td><td></td>
+        <td>Total (${videos.length})</td>
+        <td></td>
+        <td class="num">${formatNum(totalViews)}</td>
+        <td class="num">${formatNum(totalLikes)}</td>
+        <td class="num">${formatNum(totalComments)}</td>
+        <td>${formatDuration(totalDuration)}</td>
+        <td></td>
+    `;
+    tbody.appendChild(totTr);
 
     videos.forEach((v, i) => {
         const tr = document.createElement('tr');
@@ -463,36 +506,54 @@ async function loadQuota() {
 }
 
 // --- History ---
-let historyVisible = false;
+const langNames = {
+    'en': 'English', 'zh-TW': '中文繁體', 'zh-CN': '中文简体',
+    'ja': '日本語', 'ko': '한국어', 'es': 'Español', 'pt': 'Português',
+    'fr': 'Français', 'de': 'Deutsch', 'hi': 'हिन्दी', 'ar': 'العربية',
+    'th': 'ไทย', 'vi': 'Tiếng Việt', 'id': 'Bahasa', 'ru': 'Русский',
+    'english': 'English', 'mandarin': '普通话', 'cantonese': '廣東話',
+    'japanese': '日本語', 'korean': '한국어', 'spanish': 'Spanish',
+    'portuguese': 'Portuguese', 'french': 'French', 'german': 'German',
+    'hindi': 'Hindi', 'arabic': 'Arabic', 'thai': 'Thai',
+    'vietnamese': 'Vietnamese', 'indonesian': 'Indonesian', 'russian': 'Russian'
+};
 
 async function toggleHistory() {
+    loadHistory();
+}
+
+async function loadHistory() {
     const list = document.getElementById('historyList');
-    historyVisible = !historyVisible;
-    list.style.display = historyVisible ? 'block' : 'none';
+    try {
+        const res = await fetch('/api/search/history');
+        const history = await res.json();
 
-    if (historyVisible) {
-        try {
-            const res = await fetch('/api/search/history');
-            const history = await res.json();
-
-            if (history.length === 0) {
-                list.innerHTML = '<p style="color:var(--muted);font-size:0.85rem">No searches yet</p>';
-                return;
-            }
-
-            list.innerHTML = history.map(h => `
-                <div class="history-item" onclick="loadHistorySearch(${h.id}, '${h.published_after}', '${h.published_before}')">
-                    <span>${h.published_after} to ${h.published_before} &mdash; ${h.total_results} videos</span>
-                    <span class="history-meta">${h.searched_at}</span>
-                </div>
-            `).join('');
-        } catch (e) {
-            list.innerHTML = '<p style="color:var(--muted)">Failed to load history</p>';
+        if (history.length === 0) {
+            list.innerHTML = '<p style="color:var(--muted);font-size:0.75rem">No searches yet</p>';
+            return;
         }
+
+        list.innerHTML = history.map(h => {
+            const tags = [];
+            if (h.channel_name) tags.push(escHtml(h.channel_name));
+            if (h.query) tags.push(`"${escHtml(h.query)}"`);
+            if (h.title_lang) tags.push(`title:${langNames[h.title_lang] || h.title_lang}`);
+            if (h.audio_lang) tags.push(`audio:${langNames[h.audio_lang] || h.audio_lang}`);
+            if (h.pages_fetched > 1) tags.push(`${h.pages_fetched}pg`);
+            const label = tags.length ? ` [${tags.join(', ')}]` : '';
+            return `
+                <div class="history-item" onclick="loadHistorySearch(${h.id}, '${h.published_after}', '${h.published_before}')">
+                    <span>${h.published_after} to ${h.published_before}${label}</span>
+                    <span class="history-meta">${h.total_results} videos &middot; ${h.searched_at}</span>
+                </div>
+            `}).join('');
+    } catch (e) {
+        list.innerHTML = '<p style="color:var(--muted)">Failed to load history</p>';
     }
 }
 
 async function loadHistorySearch(searchId, dateFrom, dateTo) {
+    showPanel('search');
     showLoading(true);
     hideError();
 
