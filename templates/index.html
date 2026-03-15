@@ -13,6 +13,8 @@
             <div class="nav-brand">YT</div>
             <button class="nav-btn active" id="navSearch" onclick="showPanel('search')">Search</button>
             <button class="nav-btn" id="navHistory" onclick="showPanel('history')">History</button>
+            <button class="nav-btn" id="navPlaylist" onclick="showPanel('playlist')">Playlist</button>
+            <button class="nav-btn" id="navBookmark" onclick="showPanel('bookmark')">Playlist Bookmark</button>
         </nav>
 
         <!-- Right panel -->
@@ -27,13 +29,23 @@
                 <section class="search-section">
                     <form id="searchForm" onsubmit="return false;">
                         <div class="form-row">
-                            <div class="form-group" style="flex:1">
-                                <label for="query">Search (optional)</label>
-                                <input type="text" id="query" placeholder="e.g. music, gaming, news...">
+                            <div class="form-group" style="grid-column: 1 / -1;">
+                                <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.25rem">
+                                    <label for="searchInput">Search</label>
+                                    <button type="button" id="searchModeBtn" onclick="toggleSearchMode()" style="padding:0.25rem 0.75rem;font-size:0.75rem;font-weight:bold">OR</button>
+                                </div>
+                                <div id="searchTags" class="search-tags"></div>
+                                <input type="text" id="searchInput" placeholder="Type and press Enter to add tags or Tab for {input1}..." onkeydown="handleSearchKeydown(event)">
                             </div>
-                            <div class="form-group" style="flex:1">
-                                <label for="channelName">Channel (optional)</label>
-                                <input type="text" id="channelName" placeholder="e.g. Eric长安万年">
+                        </div>
+                        <div class="form-row" style="margin-top:1rem">
+                            <div class="form-group">
+                                <label for="searchType">Type</label>
+                                <select id="searchType" onchange="updateSearchPlaceholder()">
+                                    <option value="fuzzy">Fuzzy Search</option>
+                                    <option value="channel">Search YouTuber</option>
+                                    <option value="playlist">Search Playlist</option>
+                                </select>
                             </div>
                             <div class="form-group">
                                 <label for="titleLang">Title Language</label>
@@ -78,24 +90,21 @@
                                 </select>
                             </div>
                         </div>
-                        <div class="form-row" style="margin-top:0.75rem">
+                        <div class="form-row" style="margin-top:1rem">
                             <div class="form-group">
                                 <label for="dateFrom">From</label>
                                 <input type="date" id="dateFrom" required>
+                                <div class="field-error" id="dateFromError"></div>
                             </div>
                             <div class="form-group">
                                 <label for="dateTo">To</label>
                                 <input type="date" id="dateTo" required>
+                                <div class="field-error" id="dateToError"></div>
                             </div>
                             <div class="form-group">
                                 <label for="maxPages">Pages</label>
-                                <select id="maxPages">
-                                    <option value="1">1 (50 videos)</option>
-                                    <option value="2">2 (100 videos)</option>
-                                    <option value="3">3 (150 videos)</option>
-                                    <option value="5">5 (250 videos)</option>
-                                    <option value="10">10 (500 videos)</option>
-                                </select>
+                                <input type="number" id="maxPages" min="1" max="20" value="1" required>
+                                <div class="field-error" id="maxPagesError"></div>
                             </div>
                         </div>
                         <!-- Honeypot -->
@@ -108,7 +117,7 @@
                             <button type="button" onclick="setQuickDate('lastYear', event)">Last Year</button>
                             <button type="button" onclick="setQuickDate('allTime', event)">All Time</button>
                             <button type="button" onclick="clearSearch()">Clear</button>
-                            <button type="button" id="searchBtn" onclick="submitSearch()">Find Top Videos</button>
+                            <button type="button" id="searchBtn" onclick="submitSearch()" style="background:var(--fg);color:var(--bg);font-weight:700">Find Top Videos</button>
                         </div>
                     </form>
 
@@ -167,9 +176,60 @@
                 </header>
                 <div id="historyList"></div>
             </div>
+
+            <!-- Playlist panel -->
+            <div id="panelPlaylist" class="panel" style="display:none">
+                <header>
+                    <h1>Playlist</h1>
+                    <p class="subtitle">Extract all video links from a YouTube playlist</p>
+                </header>
+
+                <section class="search-section">
+                    <form id="playlistForm" onsubmit="return false;">
+                        <div class="form-group">
+                            <label for="playlistUrl">YouTube Playlist URL</label>
+                            <input type="text" id="playlistUrl" placeholder="https://www.youtube.com/playlist?list=..." required>
+                        </div>
+                        <button type="button" id="fetchPlaylistBtn" onclick="fetchPlaylist()">Fetch Videos</button>
+                    </form>
+                </section>
+
+                <div id="playlistError" class="error-msg" style="display:none"></div>
+                <div id="playlistLoading" class="loading" style="display:none">Fetching playlist...</div>
+
+                <section id="playlistResults" style="display:none">
+                    <div class="results-header">
+                        <span id="playlistSummary"></span>
+                        <button type="button" onclick="markPlaylist()">Mark</button>
+                        <button type="button" onclick="exportPlaylistLinks()">Export All Links</button>
+                    </div>
+                    <div class="table-wrap">
+                        <table id="playlistTable">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Thumbnail</th>
+                                    <th>Title</th>
+                                    <th>Channel</th>
+                                    <th>Duration</th>
+                                </tr>
+                            </thead>
+                            <tbody id="playlistBody"></tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Playlist Bookmark panel -->
+            <div id="panelBookmark" class="panel" style="display:none">
+                <header>
+                    <h1>Playlist Bookmarks</h1>
+                </header>
+                <div id="bookmarkList"></div>
+            </div>
         </main>
     </div>
 
-    <script src="{{ url_for('static', filename='app.js') }}"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=6"></script>
 </body>
 </html>

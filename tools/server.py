@@ -20,6 +20,8 @@ app = Flask(
     static_folder=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'static')
 )
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev-key-change-me')
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
 
 @app.route('/')
@@ -44,6 +46,12 @@ def search():
     channel_name = data.get('channel_name', '').strip()
     title_lang = data.get('title_lang', '').strip()
     audio_lang = data.get('audio_lang', '').strip()
+    playlist_url = data.get('playlist_url', '').strip()
+
+    print(f"\n[DEBUG] Received request:")
+    print(f"  - query: '{query}'")
+    print(f"  - channel_name: '{channel_name}'")
+    print(f"  - playlist_url: '{playlist_url}'")
 
     if not published_after or not published_before:
         return jsonify({'error': 'Both published_after and published_before are required'}), 400
@@ -52,10 +60,20 @@ def search():
         return jsonify({'error': 'Start date must be before end date'}), 400
 
     try:
-        result = youtube_fetch.search_top_videos(
-            published_after, published_before, max_pages,
-            query, title_lang, audio_lang, channel_name
-        )
+        # If playlist URL is provided, use playlist search
+        if playlist_url:
+            print(f"[DEBUG] Playlist search requested: {playlist_url}")
+            result = youtube_fetch.fetch_playlist_videos(
+                playlist_url, published_after, published_before,
+                title_lang, audio_lang
+            )
+            print(f"[DEBUG] Playlist search returned {result['total_results']} videos")
+        else:
+            print(f"[DEBUG] Regular search: query={query}, channel={channel_name}")
+            result = youtube_fetch.search_top_videos(
+                published_after, published_before, max_pages,
+                query, title_lang, audio_lang, channel_name
+            )
         return jsonify(result)
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
@@ -194,6 +212,23 @@ def notebooklm_login():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/playlist/fetch', methods=['POST'])
+def fetch_playlist():
+    data = request.get_json()
+    if not data or not data.get('playlist_url'):
+        return jsonify({'error': 'playlist_url required'}), 400
+
+    playlist_url = data['playlist_url'].strip()
+
+    try:
+        result = youtube_fetch.fetch_playlist_videos_simple(playlist_url)
+        return jsonify(result)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': f'Failed to fetch playlist: {str(e)}'}), 500
+
+
 if __name__ == '__main__':
     db.init_db()
 
@@ -207,4 +242,4 @@ if __name__ == '__main__':
 
     port = int(os.getenv('PORT', 5000))
     print(f"  Starting server at http://localhost:{port}")
-    app.run(debug=os.getenv('FLASK_DEBUG', 'false').lower() == 'true', port=port)
+    app.run(debug=True, port=port)

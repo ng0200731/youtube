@@ -108,6 +108,271 @@ def title_matches_lang(title, lang_code):
     return ratio >= SCRIPT_MIN_RATIO
 
 
+def extract_playlist_id(playlist_url):
+    """Extract playlist ID from YouTube playlist URL."""
+    if not playlist_url:
+        return None
+
+    # Handle different playlist URL formats
+    patterns = [
+        r'list=([a-zA-Z0-9_-]+)',  # Standard format
+        r'playlist\?list=([a-zA-Z0-9_-]+)',  # Full URL
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, playlist_url)
+        if match:
+            return match.group(1)
+
+    # If it's already just the ID
+    if re.match(r'^[a-zA-Z0-9_-]+$', playlist_url):
+        return playlist_url
+
+    return None
+
+
+def fetch_playlist_videos(playlist_url, published_after, published_before,
+                          title_lang='', audio_lang=''):
+    """Fetch all videos from a YouTube playlist and filter by date range."""
+    youtube, current_key = get_youtube_client()
+    db.init_db()
+
+    playlist_id = extract_playlist_id(playlist_url)
+    if not playlist_id:
+        raise ValueError("Invalid playlist URL or ID")
+
+    all_video_ids = []
+    quota_used = 0
+    page_token = None
+
+    # Fetch all video IDs from the playlist
+    while True:
+        try:
+            params = {
+                'part': 'contentDetails',
+                'playlistId': playlist_id,
+                'maxResults': 50,
+            }
+            if page_token:
+                params['pageToken'] = page_token
+
+            response = youtube.playlistItems().list(**params).execute()
+            quota_used += 1
+
+            video_ids = [item['contentDetails']['videoId']
+                        for item in response.get('items', [])]
+            all_video_ids.extend(video_ids)
+
+            page_token = response.get('nextPageToken')
+            if not page_token:
+                break
+
+            time.sleep(0.2)
+
+        except HttpError as e:
+            if e.resp.status == 403:
+                mark_key_exhausted(current_key)
+                try:
+                    youtube, current_key = get_youtube_client()
+                    continue
+                except ValueError:
+                    raise ValueError("All API keys exhausted. Add more keys or try tomorrow.")
+            raise
+
+    if not all_video_ids:
+        search_id = db.log_search(published_after, published_before, 1, 0, quota_used,
+                                  f'playlist:{playlist_id}', '', title_lang, audio_lang)
+        return {'search_id': search_id, 'total_results': 0, 'quota_used': quota_used, 'videos': []}
+
+    # Check cache
+    cached_ids = db.get_cached_video_ids(all_video_ids)
+    uncached_ids = [vid for vid in all_video_ids if vid not in cached_ids]
+
+    # Fetch details for uncached videos
+    if uncached_ids:
+        for i in range(0, len(uncached_ids), 50):
+            batch = uncached_ids[i:i + 50]
+            details = None
+            for _attempt in range(len(_load_keys())):
+                try:
+                    details = youtube.videos().list(
+                        part='snippet,statistics,contentDetails',
+                        id=','.join(batch)
+                    ).execute()
+                    quota_used += 1
+                    break
+                except HttpError as e:
+                    if e.resp.status == 403:
+                        mark_key_exhausted(current_key)
+                        try:
+                            youtube, current_key = get_youtube_client()
+                        except ValueError:
+                            raise ValueError("All API keys exhausted. Add more keys or try tomorrow.")
+                    else:
+                        raise
+
+            if details:
+                videos_to_insert = []
+                for item in details.get('items', []):
+                    snippet = item['snippet']
+                    stats = item.get('statistics', {})
+                    content = item.get('contentDetails', {})
+                    duration_iso = content.get('duration', '')
+
+                    videos_to_insert.append({
+                        'video_id': item['id'],
+                        'title': snippet.get('title', ''),
+                        'channel_title': snippet.get('channelTitle', ''),
+                        'channel_id': snippet.get('channelId', ''),
+                        'description': snippet.get('description', ''),
+                        'tags': snippet.get('tags', []),
+                        'thumbnail_url': snippet.get('thumbnails', {}).get('high', {}).get('url', ''),
+                        'publish_date': snippet.get('publishedAt', ''),
+                        'duration': duration_iso,
+                        'duration_seconds': parse_duration(duration_iso),
+                        'view_count': int(stats.get('viewCount', 0)),
+                        'like_count': int(stats.get('likeCount', 0)),
+                        'comment_count': int(stats.get('commentCount', 0)),
+                        'category_id': snippet.get('categoryId', ''),
+                        'video_url': f"https://www.youtube.com/watch?v={item['id']}"
+                    })
+
+                db.insert_videos(videos_to_insert)
+
+    # Get all videos and filter by date range
+    videos = db.get_videos_by_ids(all_video_ids)
+
+    print(f"[DEBUG] Total videos fetched from playlist: {len(videos)}")
+    print(f"[DEBUG] Date range filter: {published_after} to {published_before}")
+
+    # Filter by publish date range
+    filtered_videos = []
+    filtered_out_count = 0
+    for v in videos:
+        pub_date = v.get('publish_date', '')[:10]  # Extract YYYY-MM-DD
+        if published_after <= pub_date <= published_before:
+            filtered_videos.append(v)
+        else:
+            filtered_out_count += 1
+            if filtered_out_count <= 3:  # Show first 3 filtered videos
+                print(f"[DEBUG] Filtered out: {v.get('title', 'Unknown')[:50]} (published: {pub_date})")
+
+    if filtered_out_count > 3:
+        print(f"[DEBUG] ... and {filtered_out_count - 3} more videos filtered out")
+    print(f"[DEBUG] Videos after date filter: {len(filtered_videos)}")
+
+    # Filter by title language
+    if title_lang:
+        filtered_videos = [v for v in filtered_videos
+                          if title_matches_lang(v.get('title', ''), title_lang)]
+
+    # Sort by view count descending
+    filtered_videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
+
+    # Log search and link results
+    search_id = db.log_search(
+        published_after, published_before, 1, len(filtered_videos), quota_used,
+        f'playlist:{playlist_id}', '', title_lang, audio_lang
+    )
+    db.link_search_results(search_id, [v['video_id'] for v in filtered_videos])
+
+    return {
+        'search_id': search_id,
+        'total_results': len(filtered_videos),
+        'quota_used': quota_used,
+        'videos': filtered_videos
+    }
+
+
+def fetch_playlist_videos_simple(playlist_url):
+    """Fetch all videos from a YouTube playlist without date filtering."""
+    youtube, current_key = get_youtube_client()
+
+    playlist_id = extract_playlist_id(playlist_url)
+    if not playlist_id:
+        raise ValueError("Invalid playlist URL or ID")
+
+    all_video_ids = []
+    page_token = None
+
+    # Fetch all video IDs from the playlist
+    while True:
+        try:
+            params = {
+                'part': 'contentDetails',
+                'playlistId': playlist_id,
+                'maxResults': 50,
+            }
+            if page_token:
+                params['pageToken'] = page_token
+
+            response = youtube.playlistItems().list(**params).execute()
+
+            video_ids = [item['contentDetails']['videoId']
+                        for item in response.get('items', [])]
+            all_video_ids.extend(video_ids)
+
+            page_token = response.get('nextPageToken')
+            if not page_token:
+                break
+
+            time.sleep(0.2)
+
+        except HttpError as e:
+            if e.resp.status == 403:
+                mark_key_exhausted(current_key)
+                try:
+                    youtube, current_key = get_youtube_client()
+                    continue
+                except ValueError:
+                    raise ValueError("All API keys exhausted. Add more keys or try tomorrow.")
+            raise
+
+    if not all_video_ids:
+        return {'videos': []}
+
+    # Fetch video details in batches
+    all_videos = []
+    for i in range(0, len(all_video_ids), 50):
+        batch = all_video_ids[i:i + 50]
+        details = None
+        for _attempt in range(len(_load_keys())):
+            try:
+                details = youtube.videos().list(
+                    part='snippet,contentDetails',
+                    id=','.join(batch)
+                ).execute()
+                break
+            except HttpError as e:
+                if e.resp.status == 403:
+                    mark_key_exhausted(current_key)
+                    try:
+                        youtube, current_key = get_youtube_client()
+                    except ValueError:
+                        raise ValueError("All API keys exhausted. Add more keys or try tomorrow.")
+                else:
+                    raise
+
+        if details:
+            for item in details.get('items', []):
+                snippet = item['snippet']
+                content = item.get('contentDetails', {})
+                duration_iso = content.get('duration', '')
+
+                all_videos.append({
+                    'video_id': item['id'],
+                    'title': snippet.get('title', ''),
+                    'channel_title': snippet.get('channelTitle', ''),
+                    'thumbnail_url': snippet.get('thumbnails', {}).get('high', {}).get('url', ''),
+                    'duration_seconds': parse_duration(duration_iso),
+                    'video_url': f"https://www.youtube.com/watch?v={item['id']}"
+                })
+
+        time.sleep(0.2)
+
+    return {'videos': all_videos}
+
+
 def search_top_videos(published_after, published_before, max_pages=1, query='',
                       title_lang='', audio_lang='', channel_name=''):
     youtube, current_key = get_youtube_client()
@@ -278,9 +543,22 @@ if __name__ == '__main__':
     parser.add_argument('--after', required=True, help='Start date (YYYY-MM-DD)')
     parser.add_argument('--before', required=True, help='End date (YYYY-MM-DD)')
     parser.add_argument('--pages', type=int, default=1, help='Number of pages (50 results each)')
+    parser.add_argument('--playlist', help='Playlist URL or ID to fetch videos from')
+    parser.add_argument('--title-lang', default='', help='Filter by title language (en, zh-TW, ja, etc.)')
+    parser.add_argument('--audio-lang', default='', help='Filter by audio language')
     args = parser.parse_args()
 
-    result = search_top_videos(args.after, args.before, args.pages)
+    if args.playlist:
+        result = fetch_playlist_videos(
+            args.playlist, args.after, args.before,
+            args.title_lang, args.audio_lang
+        )
+    else:
+        result = search_top_videos(
+            args.after, args.before, args.pages,
+            title_lang=args.title_lang, audio_lang=args.audio_lang
+        )
+
     print(f"Found {result['total_results']} videos (quota used: {result['quota_used']})")
     for v in result['videos'][:10]:
         print(f"  {v['view_count']:>15,} views | {v['title'][:60]}")

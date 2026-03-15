@@ -3,6 +3,9 @@ let currentVideos = [];
 let sortKey = 'view_count';
 let sortAsc = false;
 let selectedIds = new Set();
+let searchTags = [];
+let searchMode = 'OR'; // 'OR' or 'AND'
+let formattedTagCounter = 1;
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -16,7 +19,128 @@ document.addEventListener('DOMContentLoaded', () => {
     // Clear highlight when dates are manually changed
     document.getElementById('dateFrom').addEventListener('change', clearQuickDateHighlight);
     document.getElementById('dateTo').addEventListener('change', clearQuickDateHighlight);
+
+    // Set initial placeholder
+    updateSearchPlaceholder();
 });
+
+function updateSearchPlaceholder() {
+    const searchType = document.getElementById('searchType');
+    const searchInput = document.getElementById('searchInput');
+
+    if (!searchType || !searchInput) return;
+
+    switch(searchType.value) {
+        case 'fuzzy':
+            searchInput.placeholder = 'Type and press Enter to add tags...';
+            break;
+        case 'channel':
+            searchInput.placeholder = 'e.g. Eric长安万年';
+            break;
+        case 'playlist':
+            searchInput.placeholder = 'e.g. https://www.youtube.com/playlist?list=...';
+            break;
+    }
+}
+
+// --- Search tags ---
+function toggleSearchMode() {
+    searchMode = searchMode === 'OR' ? 'AND' : 'OR';
+    document.getElementById('searchModeBtn').textContent = searchMode;
+}
+
+function handleSearchKeydown(event) {
+    console.log('Key pressed:', event.key); // Debug log
+    const searchType = document.getElementById('searchType').value;
+    console.log('Search type:', searchType); // Debug log
+
+    // Only use tag mode for fuzzy search
+    if (searchType !== 'fuzzy') return;
+
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        const input = event.target;
+        const value = input.value.trim();
+
+        console.log('Adding tag:', value);
+        console.log('Current tags:', searchTags);
+
+        if (value && !searchTags.includes(value)) {
+            searchTags.push(value);
+            console.log('Tags after push:', searchTags);
+            renderSearchTags();
+            input.value = '';
+        }
+    } else if (event.key === 'Tab') {
+        console.log('Tab key detected!'); // Debug log
+        event.preventDefault();
+        const input = event.target;
+        const value = input.value.trim();
+        console.log('Input value:', value); // Debug log
+
+        if (value) {
+            if (!searchTags.includes(value)) {
+                searchTags.push(value);
+                console.log('Current tags:', searchTags);
+                renderSearchTags();
+                input.value = '';
+
+                // Show popup feedback
+                console.log('Calling showTabPopup'); // Debug log
+                showTabPopup(value);
+            }
+        }
+    }
+}
+
+function showTabPopup(tagText) {
+    // Remove any existing popup
+    const existingPopup = document.querySelector('.tab-popup');
+    if (existingPopup) {
+        existingPopup.remove();
+    }
+
+    // Create new popup
+    const popup = document.createElement('div');
+    popup.className = 'tab-popup';
+    popup.textContent = tagText;
+    document.body.appendChild(popup);
+
+    // Remove popup after animation completes
+    setTimeout(() => {
+        popup.remove();
+    }, 800);
+}
+
+function removeSearchTag(tag) {
+    searchTags = searchTags.filter(t => t !== tag);
+    renderSearchTags();
+}
+
+function renderSearchTags() {
+    const container = document.getElementById('searchTags');
+    console.log('Rendering tags:', searchTags);
+    console.log('Container:', container);
+
+    if (!container) {
+        console.error('searchTags container not found!');
+        return;
+    }
+
+    container.innerHTML = searchTags.map((tag, index) => `
+        <span class="search-tag">
+            ${escHtml(tag)}
+            <span class="search-tag-remove" onclick="removeSearchTagByIndex(${index})">✕</span>
+        </span>
+    `).join('');
+
+    console.log('Container HTML:', container.innerHTML);
+}
+
+function removeSearchTagByIndex(index) {
+    searchTags.splice(index, 1);
+    renderSearchTags();
+}
 
 function clearQuickDateHighlight() {
     document.querySelectorAll('.quick-dates button').forEach(btn => {
@@ -26,13 +150,18 @@ function clearQuickDateHighlight() {
 
 // --- Clear search form ---
 function clearSearch() {
-    document.getElementById('query').value = '';
-    document.getElementById('channelName').value = '';
+    searchTags = [];
+    renderSearchTags();
+    document.getElementById('searchInput').value = '';
+    document.getElementById('searchType').value = 'fuzzy';
     document.getElementById('titleLang').value = '';
     document.getElementById('audioLang').value = '';
     document.getElementById('dateFrom').value = '';
     document.getElementById('dateTo').value = '';
     document.getElementById('maxPages').value = '1';
+    searchMode = 'OR';
+    document.getElementById('searchModeBtn').textContent = 'OR';
+    updateSearchPlaceholder();
     clearQuickDateHighlight();
 }
 
@@ -40,9 +169,14 @@ function clearSearch() {
 function showPanel(name) {
     document.getElementById('panelSearch').style.display = name === 'search' ? 'block' : 'none';
     document.getElementById('panelHistory').style.display = name === 'history' ? 'block' : 'none';
+    document.getElementById('panelPlaylist').style.display = name === 'playlist' ? 'block' : 'none';
+    document.getElementById('panelBookmark').style.display = name === 'bookmark' ? 'block' : 'none';
     document.getElementById('navSearch').classList.toggle('active', name === 'search');
     document.getElementById('navHistory').classList.toggle('active', name === 'history');
+    document.getElementById('navPlaylist').classList.toggle('active', name === 'playlist');
+    document.getElementById('navBookmark').classList.toggle('active', name === 'bookmark');
     if (name === 'history') loadHistory();
+    if (name === 'bookmark') loadBookmarks();
 }
 
 // --- Quick date presets ---
@@ -90,8 +224,8 @@ async function submitSearch() {
     const dateFrom = document.getElementById('dateFrom').value;
     const dateTo = document.getElementById('dateTo').value;
     const maxPages = document.getElementById('maxPages').value;
-    const query = document.getElementById('query').value;
-    const channelName = document.getElementById('channelName').value;
+    const searchInput = document.getElementById('searchInput').value;
+    const searchType = document.getElementById('searchType').value;
     const titleLang = document.getElementById('titleLang').value;
     const audioLang = document.getElementById('audioLang').value;
     const honeypot = document.getElementById('website').value;
@@ -105,6 +239,36 @@ async function submitSearch() {
     showLoading(true);
     document.getElementById('searchBtn').disabled = true;
 
+    // Map search type to API parameters
+    let query = '';
+    let channelName = '';
+    let playlistUrl = '';
+
+    switch(searchType) {
+        case 'fuzzy':
+            // For fuzzy search, combine tags with OR/AND logic
+            if (searchTags.length > 0) {
+                if (searchMode === 'OR') {
+                    query = searchTags.join(' OR ');
+                } else {
+                    // For AND mode, wrap each tag in quotes and join with space
+                    query = searchTags.map(tag => `"${tag}"`).join(' ');
+                }
+                console.log('Search mode:', searchMode);
+                console.log('Search tags:', searchTags);
+                console.log('Final query:', query);
+            } else if (searchInput.trim()) {
+                query = searchInput.trim();
+            }
+            break;
+        case 'channel':
+            channelName = searchInput;
+            break;
+        case 'playlist':
+            playlistUrl = searchInput;
+            break;
+    }
+
     try {
         const res = await fetch('/api/search', {
             method: 'POST',
@@ -115,6 +279,7 @@ async function submitSearch() {
                 max_pages: parseInt(maxPages),
                 query: query,
                 channel_name: channelName,
+                playlist_url: playlistUrl,
                 title_lang: titleLang,
                 audio_lang: audioLang,
                 website: honeypot
@@ -129,13 +294,37 @@ async function submitSearch() {
         }
 
         currentSearchId = data.search_id;
-        currentVideos = data.videos;
+        let videos = data.videos;
+
+        // Client-side filtering for AND mode in fuzzy search
+        if (searchType === 'fuzzy' && searchMode === 'AND' && searchTags.length > 0) {
+            console.log('Applying AND filter with tags:', searchTags);
+            console.log('Original video count:', videos.length);
+
+            videos = videos.filter(video => {
+                const title = video.title.toLowerCase();
+
+                // Check if ALL tags appear in title only
+                const matches = searchTags.every(tag =>
+                    title.includes(tag.toLowerCase())
+                );
+
+                if (!matches) {
+                    console.log(`Filtered out: "${video.title}" - missing some tags in title`);
+                }
+
+                return matches;
+            });
+            console.log(`Filtered from ${data.videos.length} to ${videos.length} videos (AND mode)`);
+        }
+
+        currentVideos = videos;
         sortKey = 'view_count';
         sortAsc = false;
         selectedIds.clear();
         document.getElementById('tableFilter').value = '';
         document.getElementById('selectAll').checked = false;
-        renderResults(data.videos, dateFrom, dateTo, data.quota_used);
+        renderResults(videos, dateFrom, dateTo, data.quota_used);
         updateActionBar();
         loadQuota();
         loadHistory();
@@ -660,4 +849,173 @@ function hideError() {
 
 function showLoading(show) {
     document.getElementById('loading').style.display = show ? 'block' : 'none';
+}
+
+// --- Playlist functions ---
+let playlistVideos = [];
+
+async function fetchPlaylist() {
+    const playlistUrl = document.getElementById('playlistUrl').value.trim();
+
+    if (!playlistUrl) {
+        showPlaylistError('Please enter a playlist URL');
+        return;
+    }
+
+    hidePlaylistError();
+    showPlaylistLoading(true);
+    document.getElementById('fetchPlaylistBtn').disabled = true;
+
+    try {
+        const res = await fetch('/api/playlist/fetch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ playlist_url: playlistUrl })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+            showPlaylistError(data.error || 'Failed to fetch playlist');
+            return;
+        }
+
+        playlistVideos = data.videos;
+        renderPlaylistResults(data.videos);
+    } catch (err) {
+        showPlaylistError('Network error: ' + err.message);
+    } finally {
+        showPlaylistLoading(false);
+        document.getElementById('fetchPlaylistBtn').disabled = false;
+    }
+}
+
+function renderPlaylistResults(videos) {
+    const section = document.getElementById('playlistResults');
+    const summary = document.getElementById('playlistSummary');
+    const tbody = document.getElementById('playlistBody');
+
+    summary.textContent = `${videos.length} videos found`;
+
+    tbody.innerHTML = '';
+
+    // Totals row
+    const totalDuration = videos.reduce((s, v) => s + (v.duration_seconds || 0), 0);
+    const totTr = document.createElement('tr');
+    totTr.style.fontWeight = 'bold';
+    totTr.style.borderBottom = '2px solid #000';
+    totTr.innerHTML = `
+        <td></td>
+        <td></td>
+        <td>Total (${videos.length})</td>
+        <td></td>
+        <td>${formatDuration(totalDuration)}</td>
+    `;
+    tbody.appendChild(totTr);
+
+    videos.forEach((v, i) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${i + 1}</td>
+            <td><img class="thumb" src="${escHtml(v.thumbnail_url)}" alt="" loading="lazy"></td>
+            <td><a class="video-link" href="${escHtml(v.video_url)}" target="_blank" rel="noopener">${escHtml(v.title)}</a></td>
+            <td>${escHtml(v.channel_title || '')}</td>
+            <td>${formatDuration(v.duration_seconds)}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    section.style.display = 'block';
+}
+
+function exportPlaylistLinks() {
+    if (!playlistVideos.length) return;
+    const urls = playlistVideos.map(v => v.video_url).join('\n');
+    const blob = new Blob([urls], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `playlist_links_${playlistVideos.length}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+function showPlaylistError(msg) {
+    const el = document.getElementById('playlistError');
+    el.textContent = msg;
+    el.style.display = 'block';
+}
+
+function hidePlaylistError() {
+    document.getElementById('playlistError').style.display = 'none';
+}
+
+function showPlaylistLoading(show) {
+    document.getElementById('playlistLoading').style.display = show ? 'block' : 'none';
+}
+
+// --- Playlist bookmark functions ---
+function markPlaylist() {
+    if (!playlistVideos.length) return;
+
+    const name = prompt('Enter a name for this playlist:');
+    if (!name || !name.trim()) return;
+
+    const bookmarks = JSON.parse(localStorage.getItem('playlistBookmarks') || '[]');
+    const bookmark = {
+        id: Date.now(),
+        name: name.trim(),
+        url: document.getElementById('playlistUrl').value.trim(),
+        videoCount: playlistVideos.length,
+        videos: playlistVideos,
+        createdAt: new Date().toISOString()
+    };
+
+    bookmarks.push(bookmark);
+    localStorage.setItem('playlistBookmarks', JSON.stringify(bookmarks));
+
+    alert(`Playlist "${name}" has been bookmarked!`);
+}
+
+function loadBookmarks() {
+    const list = document.getElementById('bookmarkList');
+    const bookmarks = JSON.parse(localStorage.getItem('playlistBookmarks') || '[]');
+
+    if (bookmarks.length === 0) {
+        list.innerHTML = '<p style="color:var(--muted);font-size:0.75rem">No bookmarks yet</p>';
+        return;
+    }
+
+    list.innerHTML = bookmarks.map(b => `
+        <div class="history-item">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+                <div onclick="loadBookmark(${b.id})">
+                    <span style="font-weight:bold">${escHtml(b.name)}</span>
+                    <span class="history-meta">${b.videoCount} videos &middot; ${new Date(b.createdAt).toLocaleDateString()}</span>
+                </div>
+                <button type="button" onclick="deleteBookmark(${b.id}); event.stopPropagation()" style="padding:0.25rem 0.5rem;font-size:0.75rem">Delete</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function loadBookmark(bookmarkId) {
+    const bookmarks = JSON.parse(localStorage.getItem('playlistBookmarks') || '[]');
+    const bookmark = bookmarks.find(b => b.id === bookmarkId);
+
+    if (!bookmark) return;
+
+    showPanel('playlist');
+    document.getElementById('playlistUrl').value = bookmark.url;
+    playlistVideos = bookmark.videos;
+    renderPlaylistResults(bookmark.videos);
+}
+
+function deleteBookmark(bookmarkId) {
+    if (!confirm('Delete this bookmark?')) return;
+
+    const bookmarks = JSON.parse(localStorage.getItem('playlistBookmarks') || '[]');
+    const filtered = bookmarks.filter(b => b.id !== bookmarkId);
+    localStorage.setItem('playlistBookmarks', JSON.stringify(filtered));
+    loadBookmarks();
 }
